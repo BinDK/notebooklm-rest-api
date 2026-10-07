@@ -8,6 +8,8 @@
 [`teng-lin/notebooklm-py`](https://github.com/teng-lin/notebooklm-py)
 as a clean, production-ready REST API service.
 
+For maintainers and AI agents, start with [`AGENTS.md`](AGENTS.md); it maps the code, authentication rules, routes, and current integration limits. The running service exposes its exact schema at `/openapi.json` and interactive API docs at `/docs`.
+
 It allows you to manage Notebooks, add sources, perform Q&A, generate artifacts, and download outputs via HTTP.
 
 ---

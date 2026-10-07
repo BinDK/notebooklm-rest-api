@@ -253,11 +253,11 @@ async def add_source_youtube(notebook_id: str, req: SourceAddYoutubeReq):
     client = await get_client()
     async with client:
         try:
-            src = await client.sources.add_youtube(notebook_id, req.url, wait=req.wait)
+            src = await client.sources.add_url(notebook_id, req.url, wait=req.wait)
             return {"ok": True, "source": src.model_dump() if hasattr(src, "model_dump") else src.__dict__}
         except TypeError:
             try:
-                src = await client.sources.add_youtube(notebook_id, req.url)
+                src = await client.sources.add_url(notebook_id, req.url)
                 return {"ok": True, "source": src.model_dump() if hasattr(src, "model_dump") else src.__dict__}
             except RPCError as e:
                 raise map_rpc_error(e)

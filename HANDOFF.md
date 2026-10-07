@@ -1,5 +1,7 @@
 # Handoff: NotebookLM REST API
 
+Start with `AGENTS.md` for the API map and development rules. `README.md` is the user guide; `/openapi.json` is the generated API schema.
+
 Continue the `BinDK/notebooklm-rest-api` fork for Dokploy. User authorized commit/push to their fork only; never push upstream `origin`.
 
 ## Git
@@ -7,7 +9,7 @@ Continue the `BinDK/notebooklm-rest-api` fork for Dokploy. User authorized commi
 - Fork remote: `binkd` (`git@github.com:BinDK/notebooklm-rest-api.git`). Verify remote before pushing; only push `binkd master`.
 
 ## Auth state
-Cookie Editor export works; no custom extension needed. `/Users/MAC/Downloads/zen notebook.json` uploaded successfully, and `/setup/api/check` passed (4 notebooks). Never print cookie values. Auth persists in Podman/Docker volume `notebooklm_data` at `/data/notebooklm`. Local host port is 8001. User has currently run `podman compose down`; do not assume app is running.
+The user uploaded a fresh Cookie Editor export from Chrome; the setup page reported “Session verified. 4 notebooks available.” A subsequent live read returned 200 with four notebooks from both `/setup/api/sources/notebooks` and `/v1/notebooks`. No custom extension is needed. Never print cookie values. Auth persists in Podman/Docker volume `notebooklm_data` at `/data/notebooklm`. Local host port is 8001; Compose is running.
 
 ## Implementation
 - `setup_portal.py`: Cookie Editor instructions, file upload or pasted JSON with shared verification; removed extension download route.
@@ -20,9 +22,6 @@ The installed `notebooklm-py` has `sources.add_url(...)`, which handles URL and 
 
 ## Live state after local Compose verification
 
-Compose was rebuilt and started on host port 8001, preserving the volume. `/health`, `/setup`, and `/setup/sources` returned 200. The saved session file is present, but `/setup/api/check` returned 502: `CSRF token not found in HTML. Final URL: https://notebook.google.com/`. The in-app renewal failed with the same error, and re-uploading the previous Cookie Editor export failed verification without replacing the saved session. `/setup/api/sources/notebooks` now returns a clear 502 instead of 500 when auth fails. The source-manager actions cannot be tried against NotebookLM until its session works again. The [upstream troubleshooting page](https://github.com/teng-lin/notebooklm-py/blob/main/docs/troubleshooting.md) describes this exact CSRF error as potentially a page/extraction change; don't assume cookie expiry solely from this message.
-Chrome displays a signed-in NotebookLM account with four notebooks, so browser sign-in and API extraction currently disagree. Use Chrome for the next fresh Cookie Editor export; the earlier Zen export failed re-verification.
-
-Next: obtain a fresh Cookie Editor export from a currently working signed-in NotebookLM browser, paste or upload it at `/setup`, then use **Check connection**. If it still gives this CSRF error, inspect upstream notebooklm-py issues or page changes before changing the authentication model. Do not log, commit, or share cookie values. Keep `notebooklm_data`; never kill the unrelated port-8000 process.
+Compose was rebuilt and started on host port 8001, preserving the volume. `/health`, `/setup`, and `/setup/sources` returned 200. The earlier Zen export later hit `CSRF token not found in HTML`; a fresh Chrome export resolved this in the latest live check. `/setup/api/sources/notebooks` returns a clear 502 if authentication fails again. Keep `notebooklm_data`; never kill the unrelated port-8000 process. The source manager's add and delete actions have isolated checks but were not run against the user's real notebooks.
 
 All shell commands must be prefixed with `rtk` per `/Users/MAC/.codex/RTK.md`.
