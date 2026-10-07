@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import base64
 import json
 import os
@@ -13,18 +12,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from fastapi import APIRouter, FastAPI, File, HTTPException, Request, UploadFile, WebSocket
+from fastapi import APIRouter, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from notebooklm import NotebookLMClient
-from starlette.staticfiles import StaticFiles
-from websockets.asyncio.client import connect as websocket_connect
 
 
 MAX_UPLOAD_BYTES = 2 * 1024 * 1024
-NOVNC_ROOT = Path('/usr/share/novnc')
 SETUP_USERNAME = os.environ.get('NOTEBOOKLM_SETUP_USERNAME', '')
 SETUP_PASSWORD = os.environ.get('NOTEBOOKLM_SETUP_PASSWORD', '')
-REMOTE_BROWSER_ENABLED = os.environ.get('NOTEBOOKLM_REMOTE_BROWSER_ENABLED') == '1'
 
 _process_lock = threading.Lock()
 _auth_process: subprocess.Popen | None = None
@@ -38,7 +33,7 @@ SETUP_PAGE = r"""<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>NotebookLM sign-in</title>
+  <title>NotebookLM session setup</title>
   <style>
     :root { color-scheme: light; font-family: system-ui, sans-serif; }
     body { max-width: 920px; margin: 36px auto; padding: 0 20px; color: #172033; }
@@ -51,32 +46,25 @@ SETUP_PAGE = r"""<!doctype html>
     button:disabled { opacity: .55; cursor: wait; }
     #status { font-weight: 600; }
     #message { min-height: 24px; white-space: pre-wrap; }
-    iframe { width: 100%; height: 620px; border: 1px solid #c7cfda; border-radius: 8px; background: #111; }
     input[type=file] { display: block; margin: 10px 0; max-width: 100%; }
     code { overflow-wrap: anywhere; }
   </style>
 </head>
 <body>
   <h1>NotebookLM access</h1>
-  <p class="muted">Sign in, renew, or upload a session file. Google credentials are entered only on Google's page.</p>
+  <p class="muted">Upload or renew the NotebookLM session used by this service.</p>
   <section class="card">
     <h2>Session status</h2>
     <div id="status">Checking…</div>
     <p id="message" role="status"></p>
     <div class="actions">
-      <button id="login">Sign in with Google</button>
       <button class="secondary" id="renew">Renew session now</button>
       <button class="secondary" id="check">Check connection</button>
     </div>
   </section>
-  <section class="card" id="browser-card">
-    <h2>Google sign-in browser</h2>
-    <p class="muted">After starting sign-in, complete it in the browser below and wait for the NotebookLM home page.</p>
-    __REMOTE_BROWSER_CONTENT__
-  </section>
   <section class="card">
     <h2>Upload a session file</h2>
-    <p class="muted">Choose your own <code>storage_state.json</code>. The file is validated before it replaces the active session and is stored with owner-only permissions.</p>
+    <p class="muted">Choose a NotebookLM <code>storage_state.json</code> exported from a signed-in browser. We verify it before replacing the saved session.</p>
     <form id="upload-form">
       <input type="file" id="storage-file" name="file" accept="application/json,.json" required>
       <button type="submit">Upload and verify</button>
@@ -99,9 +87,6 @@ async function refreshStatus() {
       ? 'Session file present' + (result.modified ? ' · updated ' + result.modified : '')
       : 'No session file yet';
     if (result.operation) statusBox.textContent += ' · ' + result.operation;
-    if (result.remote_browser_enabled && result.operation === 'login running') {
-      messageBox.textContent = 'Complete Google sign-in in the browser below; this page will keep checking.';
-    }
   } catch (error) {
     statusBox.textContent = 'Status unavailable';
     messageBox.textContent = error.message;
@@ -120,7 +105,6 @@ async function start(path, label) {
     await refreshStatus();
   }
 }
-document.getElementById('login').addEventListener('click', () => start('/setup/api/login', 'Starting Google sign-in'));
 document.getElementById('renew').addEventListener('click', () => start('/setup/api/renew', 'Refreshing NotebookLM session'));
 document.getElementById('check').addEventListener('click', async () => {
   messageBox.textContent = 'Checking NotebookLM…';
@@ -200,7 +184,7 @@ def _operation_status() -> dict:
     return {'operation': operation, 'started_at': started}
 
 
-def _start_auth_action(storage_path: Path, action: str) -> dict:
+def _start_renew_action(storage_path: Path) -> dict:
     global _auth_process, _auth_action, _auth_started_at, _auth_log_handle
     with _process_lock:
         if _auth_process is not None and _auth_process.poll() is None:
@@ -209,28 +193,21 @@ def _start_auth_action(storage_path: Path, action: str) -> dict:
         log_path = Path(tempfile.gettempdir()) / 'notebooklm-setup-auth.log'
         log_handle = log_path.open('w', encoding='utf-8')
         os.chmod(log_path, 0o600)
-        if action == 'login':
-            command = ['python', 'setup_browser_login.py', '--storage', str(storage_path)]
-        else:
-            command = ['notebooklm', '--storage', str(storage_path), 'auth', 'refresh', '--verify']
-        environment = os.environ.copy()
-        if REMOTE_BROWSER_ENABLED:
-            environment['DISPLAY'] = environment.get('DISPLAY', ':99')
+        command = ['notebooklm', '--storage', str(storage_path), 'auth', 'refresh', '--verify']
         try:
             _auth_process = subprocess.Popen(
                 command,
                 stdin=subprocess.DEVNULL,
                 stdout=log_handle,
                 stderr=subprocess.STDOUT,
-                env=environment,
             )
         except OSError as error:
             log_handle.close()
             raise HTTPException(status_code=503, detail=f'Could not start NotebookLM auth command: {error}') from error
         _auth_log_handle = log_handle
-        _auth_action = action
+        _auth_action = 'renew'
         _auth_started_at = time.time()
-    return {'ok': True, 'message': f'{action.capitalize()} started. Complete it in the browser or wait for renewal.'}
+    return {'ok': True, 'message': 'Session renewal started. Check the connection when it finishes.'}
 
 
 async def _check_storage(storage_path: Path) -> int:
@@ -268,11 +245,7 @@ def install_setup_portal(app: FastAPI, storage_path: str) -> None:
 
     @router.get('/setup', response_class=HTMLResponse)
     async def setup_page():
-        if REMOTE_BROWSER_ENABLED and NOVNC_ROOT.is_dir():
-            browser = '<iframe title="Google sign-in browser" src="/setup/vnc/vnc.html?autoconnect=1&amp;resize=scale&amp;path=setup/vnc/websockify"></iframe>'
-        else:
-            browser = '<p class="muted">The browser will open on this machine. Complete Google sign-in in that browser window.</p>'
-        return HTMLResponse(SETUP_PAGE.replace('__REMOTE_BROWSER_CONTENT__', browser))
+        return HTMLResponse(SETUP_PAGE)
 
     @router.get('/setup/api/status')
     async def setup_status():
@@ -284,25 +257,19 @@ def install_setup_portal(app: FastAPI, storage_path: str) -> None:
             modified = datetime.fromtimestamp(metadata.st_mtime, timezone.utc).isoformat(timespec='seconds')
             size = metadata.st_size
         result = _operation_status()
-        result.update({'auth_file': exists, 'modified': modified, 'size_bytes': size, 'remote_browser_enabled': REMOTE_BROWSER_ENABLED})
+        result.update({'auth_file': exists, 'modified': modified, 'size_bytes': size})
         return result
-
-    @router.post('/setup/api/login')
-    async def start_login():
-        if REMOTE_BROWSER_ENABLED and not NOVNC_ROOT.is_dir():
-            raise HTTPException(status_code=503, detail='Remote browser UI is unavailable in this image')
-        return _start_auth_action(resolved_storage_path, 'login')
 
     @router.post('/setup/api/renew')
     async def renew_session():
         if not resolved_storage_path.is_file():
-            raise HTTPException(status_code=404, detail='No session file yet; sign in or upload one first')
-        return _start_auth_action(resolved_storage_path, 'renew')
+            raise HTTPException(status_code=404, detail='No session file yet; upload one first')
+        return _start_renew_action(resolved_storage_path)
 
     @router.post('/setup/api/check')
     async def check_session():
         if not resolved_storage_path.is_file():
-            raise HTTPException(status_code=404, detail='No session file yet; sign in or upload one first')
+            raise HTTPException(status_code=404, detail='No session file yet; upload one first')
         try:
             count = await _check_storage(resolved_storage_path)
         except Exception as error:
@@ -342,58 +309,4 @@ def install_setup_portal(app: FastAPI, storage_path: str) -> None:
             raise HTTPException(status_code=400, detail=f'Upload was not installed because verification failed: {message}') from error
         return {'ok': True, 'notebook_count': count}
 
-    @router.websocket('/setup/vnc/{path:path}')
-    async def vnc_websocket(websocket: WebSocket, path: str):
-        if path.rsplit('/', 1)[-1] != 'websockify':
-            await websocket.close(code=4404)
-            return
-        if not SETUP_USERNAME or not SETUP_PASSWORD:
-            await websocket.close(code=1013)
-            return
-        if not _credentials_valid(websocket.headers.get('authorization')):
-            await websocket.close(code=4401)
-            return
-        origin = websocket.headers.get('origin', '')
-        host = websocket.headers.get('host', '').lower()
-        if not origin or urlsplit(origin).netloc.lower() != host:
-            await websocket.close(code=4403)
-            return
-        try:
-            upstream = await websocket_connect('ws://127.0.0.1:6080/websockify', max_size=None)
-        except Exception:
-            await websocket.close(code=1013)
-            return
-        await websocket.accept()
-
-        async def browser_to_vnc():
-            while True:
-                message = await websocket.receive()
-                if message['type'] == 'websocket.disconnect':
-                    return
-                if message.get('bytes') is not None:
-                    await upstream.send(message['bytes'])
-                elif message.get('text') is not None:
-                    await upstream.send(message['text'])
-
-        async def vnc_to_browser():
-            async for message in upstream:
-                if isinstance(message, bytes):
-                    await websocket.send_bytes(message)
-                else:
-                    await websocket.send_text(message)
-
-        tasks = [asyncio.create_task(browser_to_vnc()), asyncio.create_task(vnc_to_browser())]
-        try:
-            await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-        finally:
-            for task in tasks:
-                task.cancel()
-            await upstream.close()
-            try:
-                await websocket.close()
-            except Exception:
-                pass
-
     app.include_router(router)
-    if NOVNC_ROOT.is_dir():
-        app.mount('/setup/vnc', StaticFiles(directory=str(NOVNC_ROOT), html=True), name='novnc')
