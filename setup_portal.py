@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import base64
-import io
 import json
 import os
 import secrets
@@ -9,14 +8,14 @@ import subprocess
 import tempfile
 import threading
 import time
-import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from notebooklm import NotebookLMClient
+from pydantic import BaseModel
 
 
 MAX_UPLOAD_BYTES = 2 * 1024 * 1024
@@ -49,6 +48,7 @@ SETUP_PAGE = r"""<!doctype html>
     #status { font-weight: 600; }
     #message { min-height: 24px; white-space: pre-wrap; }
     input[type=file] { display: block; margin: 10px 0; max-width: 100%; }
+    textarea { box-sizing: border-box; display: block; width: 100%; min-height: 150px; margin: 10px 0; padding: 12px; border: 1px solid #cbd5e1; border-radius: 8px; font: 14px ui-monospace, monospace; }
     code { overflow-wrap: anywhere; }
     ol { padding-left: 22px; }
     li { margin: 8px 0; }
@@ -69,13 +69,18 @@ SETUP_PAGE = r"""<!doctype html>
   <section class="card">
     <h2>Set up a new session</h2>
     <ol>
-      <li><a href="/setup/extension.zip">Download the Chrome session helper</a>, unzip it, then install the folder from <code>chrome://extensions</code> using Developer mode → Load unpacked. This is a one-time browser setup.</li>
-      <li><a href="https://notebook.google.com/" target="_blank" rel="noopener">Sign in to NotebookLM with Google</a>, then click the NotebookLM session helper in Chrome and choose <strong>Download storage_state.json</strong>.</li>
-      <li>Upload that file below. You can also upload a Cookie Editor JSON export; the service converts and verifies it before saving.</li>
+      <li>In your signed-in browser, use Cookie Editor to export cookies for Google and NotebookLM.</li>
+      <li>Upload the Cookie Editor JSON below. The service converts and verifies it before saving.</li>
     </ol>
+    <p><a href="/setup/sources">Open source manager</a> after your session is ready.</p>
     <form id="upload-form">
       <input type="file" id="storage-file" name="file" accept="application/json,.json" required>
       <button type="submit">Upload and verify</button>
+    </form>
+    <p class="muted">Or paste the exported JSON here:</p>
+    <form id="paste-form">
+      <textarea id="storage-json" aria-label="Cookie Editor JSON" placeholder="Paste your Cookie Editor JSON"></textarea>
+      <button type="submit">Paste and verify</button>
     </form>
   </section>
 <script>
@@ -135,6 +140,23 @@ document.getElementById('upload-form').addEventListener('submit', async event =>
     const result = await call('/setup/api/upload', {method: 'POST', body: form});
     messageBox.textContent = 'Session verified. ' + result.notebook_count + ' notebooks available.';
     document.getElementById('upload-form').reset();
+  } catch (error) {
+    messageBox.textContent = error.message;
+  } finally {
+    buttons.forEach(button => button.disabled = false);
+    await refreshStatus();
+  }
+});
+document.getElementById('paste-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const raw = document.getElementById('storage-json').value.trim();
+  if (!raw) { messageBox.textContent = 'Paste the exported JSON first.'; return; }
+  buttons.forEach(button => button.disabled = true);
+  messageBox.textContent = 'Verifying pasted session…';
+  try {
+    const result = await call('/setup/api/paste', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({content: raw})});
+    messageBox.textContent = 'Session verified. ' + result.notebook_count + ' notebooks available.';
+    document.getElementById('paste-form').reset();
   } catch (error) {
     messageBox.textContent = error.message;
   } finally {
@@ -225,6 +247,62 @@ async def _check_storage(storage_path: Path) -> int:
     return len(notebooks)
 
 
+class PastedSession(BaseModel):
+    content: str
+
+
+async def _install_storage(raw: bytes, storage_path: Path) -> dict:
+    if len(raw) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail='Session JSON exceeds 2 MiB')
+    operation = _operation_status().get('operation')
+    if operation and operation.endswith(' running'):
+        raise HTTPException(status_code=409, detail='Wait for the active authentication operation to finish')
+    try:
+        state = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise HTTPException(status_code=400, detail='Session must be valid JSON') from error
+    cookies = state if isinstance(state, list) else state.get('cookies') if isinstance(state, dict) else None
+    if not isinstance(cookies, list) or not cookies or any(not isinstance(cookie, dict) for cookie in cookies):
+        raise HTTPException(status_code=400, detail='JSON must contain a cookies array or be a Cookie Editor cookie list')
+    normalized_cookies = []
+    for cookie in cookies:
+        if not isinstance(cookie.get('name'), str) or not isinstance(cookie.get('value'), str) or not isinstance(cookie.get('domain'), str):
+            raise HTTPException(status_code=400, detail='Each cookie must include string name, value, and domain fields')
+        normalized = {
+            'name': cookie['name'], 'value': cookie['value'], 'domain': cookie['domain'],
+            'path': cookie.get('path') or '/', 'httpOnly': bool(cookie.get('httpOnly', False)),
+            'secure': bool(cookie.get('secure', False)),
+        }
+        expires = -1 if cookie.get('session') else cookie.get('expires', cookie.get('expirationDate', -1))
+        if isinstance(expires, (int, float)) and not isinstance(expires, bool):
+            normalized['expires'] = expires
+        same_site = {
+            'strict': 'Strict', 'lax': 'Lax', 'no_restriction': 'None',
+            'Strict': 'Strict', 'Lax': 'Lax', 'None': 'None',
+        }.get(cookie.get('sameSite'))
+        if same_site:
+            normalized['sameSite'] = same_site
+        normalized_cookies.append(normalized)
+    state = {'cookies': normalized_cookies, 'origins': state.get('origins', []) if isinstance(state, dict) else []}
+    raw = json.dumps(state, separators=(',', ':')).encode('utf-8')
+    storage_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(mode='wb', dir=storage_path.parent, prefix='.storage_state-', delete=False) as temp_file:
+            temp_path = Path(temp_file.name)
+            os.chmod(temp_path, 0o600)
+            temp_file.write(raw)
+        count = await _check_storage(temp_path)
+        os.replace(temp_path, storage_path)
+        os.chmod(storage_path, 0o600)
+    except Exception as error:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
+        message = str(error).splitlines()[0][:240] or type(error).__name__
+        raise HTTPException(status_code=400, detail=f'Session was not installed because verification failed: {message}') from error
+    return {'ok': True, 'notebook_count': count}
+
+
 def install_setup_portal(app: FastAPI, storage_path: str) -> None:
     resolved_storage_path = Path(storage_path).expanduser().resolve()
     router = APIRouter()
@@ -241,10 +319,10 @@ def install_setup_portal(app: FastAPI, storage_path: str) -> None:
                 request_host = request.headers.get('host', '').lower()
                 if not origin or urlsplit(origin).netloc.lower() != request_host:
                     return JSONResponse(status_code=403, content={'detail': 'Same-origin request required'})
-            if request.url.path == '/setup/api/upload':
+            if request.url.path in {'/setup/api/upload', '/setup/api/paste'}:
                 content_length = request.headers.get('content-length')
                 if content_length and content_length.isdigit() and int(content_length) > MAX_UPLOAD_BYTES + 65536:
-                    return JSONResponse(status_code=413, content={'detail': 'Session file exceeds 2 MiB'})
+                    return JSONResponse(status_code=413, content={'detail': 'Session JSON exceeds 2 MiB'})
         return await call_next(request)
 
     @router.get('/')
@@ -254,21 +332,6 @@ def install_setup_portal(app: FastAPI, storage_path: str) -> None:
     @router.get('/setup', response_class=HTMLResponse)
     async def setup_page():
         return HTMLResponse(SETUP_PAGE)
-
-    @router.get('/setup/extension.zip')
-    async def download_extension():
-        extension_dir = Path(__file__).parent / 'browser_extension'
-        archive = io.BytesIO()
-        with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as bundle:
-            for path in sorted(extension_dir.iterdir()):
-                if path.is_file():
-                    bundle.write(path, arcname=f'notebooklm-session-helper/{path.name}')
-        archive.seek(0)
-        return StreamingResponse(
-            archive,
-            media_type='application/zip',
-            headers={'Content-Disposition': 'attachment; filename="notebooklm-session-helper.zip"'},
-        )
 
     @router.get('/setup/api/status')
     async def setup_status():
@@ -302,63 +365,12 @@ def install_setup_portal(app: FastAPI, storage_path: str) -> None:
 
     @router.post('/setup/api/upload')
     async def upload_session(file: UploadFile = File(...)):
-        operation = _operation_status().get('operation')
-        if operation and operation.endswith(' running'):
-            raise HTTPException(status_code=409, detail='Wait for the active authentication operation to finish')
         raw = await file.read(MAX_UPLOAD_BYTES + 1)
         await file.close()
-        if len(raw) > MAX_UPLOAD_BYTES:
-            raise HTTPException(status_code=413, detail='Session file exceeds 2 MiB')
-        try:
-            state = json.loads(raw)
-        except (UnicodeDecodeError, json.JSONDecodeError) as error:
-            raise HTTPException(status_code=400, detail='Upload must be a valid JSON storage_state file') from error
-        cookies = state if isinstance(state, list) else state.get('cookies') if isinstance(state, dict) else None
-        if not isinstance(cookies, list) or not cookies or any(not isinstance(cookie, dict) for cookie in cookies):
-            raise HTTPException(status_code=400, detail='JSON must contain a cookies array or be a Cookie Editor cookie list')
-        normalized_cookies = []
-        for cookie in cookies:
-            if not isinstance(cookie.get('name'), str) or not isinstance(cookie.get('value'), str) or not isinstance(cookie.get('domain'), str):
-                raise HTTPException(status_code=400, detail='Each cookie must include string name, value, and domain fields')
-            normalized = {
-                'name': cookie['name'],
-                'value': cookie['value'],
-                'domain': cookie['domain'],
-                'path': cookie.get('path') or '/',
-                'httpOnly': bool(cookie.get('httpOnly', False)),
-                'secure': bool(cookie.get('secure', False)),
-            }
-            expires = -1 if cookie.get('session') else cookie.get('expires', cookie.get('expirationDate', -1))
-            if isinstance(expires, (int, float)) and not isinstance(expires, bool):
-                normalized['expires'] = expires
-            same_site = {
-                'strict': 'Strict',
-                'lax': 'Lax',
-                'no_restriction': 'None',
-                'Strict': 'Strict',
-                'Lax': 'Lax',
-                'None': 'None',
-            }.get(cookie.get('sameSite'))
-            if same_site:
-                normalized['sameSite'] = same_site
-            normalized_cookies.append(normalized)
-        state = {'cookies': normalized_cookies, 'origins': state.get('origins', []) if isinstance(state, dict) else []}
-        raw = json.dumps(state, separators=(',', ':')).encode('utf-8')
-        resolved_storage_path.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = None
-        try:
-            with tempfile.NamedTemporaryFile(mode='wb', dir=resolved_storage_path.parent, prefix='.storage_state-', delete=False) as temp_file:
-                temp_path = Path(temp_file.name)
-                os.chmod(temp_path, 0o600)
-                temp_file.write(raw)
-            count = await _check_storage(temp_path)
-            os.replace(temp_path, resolved_storage_path)
-            os.chmod(resolved_storage_path, 0o600)
-        except Exception as error:
-            if temp_path is not None:
-                temp_path.unlink(missing_ok=True)
-            message = str(error).splitlines()[0][:240] or type(error).__name__
-            raise HTTPException(status_code=400, detail=f'Upload was not installed because verification failed: {message}') from error
-        return {'ok': True, 'notebook_count': count}
+        return await _install_storage(raw, resolved_storage_path)
+
+    @router.post('/setup/api/paste')
+    async def paste_session(body: PastedSession):
+        return await _install_storage(body.content.encode('utf-8'), resolved_storage_path)
 
     app.include_router(router)

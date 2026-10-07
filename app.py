@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from notebooklm import NotebookLMClient, RPCError  # notebooklm-py :contentReference[oaicite:2]{index=2}
 from setup_portal import install_setup_portal
+from source_portal import install_source_portal
 
 
 # ----------------------------
@@ -113,6 +114,7 @@ setup_home = os.environ.get("NOTEBOOKLM_HOME", str(Path.home() / ".notebooklm"))
 setup_profile = os.environ.get("NOTEBOOKLM_PROFILE", "default")
 setup_storage_path = AUTH_STORAGE_PATH or os.path.join(setup_home, "profiles", setup_profile, "storage_state.json")
 install_setup_portal(app, setup_storage_path)
+install_source_portal(app, setup_storage_path)
 
 
 @app.middleware("http")
