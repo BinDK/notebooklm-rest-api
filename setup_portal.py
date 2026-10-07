@@ -302,7 +302,8 @@ def install_setup_portal(app: FastAPI, storage_path: str) -> None:
 
     @router.post('/setup/api/upload')
     async def upload_session(file: UploadFile = File(...)):
-        if _operation_status().get('operation', '').endswith(' running'):
+        operation = _operation_status().get('operation')
+        if operation and operation.endswith(' running'):
             raise HTTPException(status_code=409, detail='Wait for the active authentication operation to finish')
         raw = await file.read(MAX_UPLOAD_BYTES + 1)
         await file.close()
