@@ -1,10 +1,3 @@
-const REQUIRED_COOKIES = new Set(['SID', '__Secure-1PSIDTS']);
-const GOOGLE_SESSION_COOKIES = new Set([
-  'SID', 'HSID', 'SSID', 'APISID', 'SAPISID',
-  '__Secure-1PSID', '__Secure-1PSIDCC', '__Secure-1PSIDTS',
-  '__Secure-3PSID', '__Secure-3PSIDCC', '__Secure-3PSIDTS',
-  '__Host-1PLSID', 'LSID', 'OSID', '__Secure-OSID',
-]);
 const statusBox = document.getElementById('status');
 const exportButton = document.getElementById('export');
 
@@ -28,13 +21,14 @@ function storageCookie(cookie) {
 }
 
 async function captureCookies() {
-  const filters = [
-    {domain: 'google.com'},
-    {domain: 'notebook.google.com'},
+  const urls = [
+    'https://notebook.google.com/',
+    'https://notebooklm.google.com/',
+    'https://accounts.google.com/',
   ];
-  const found = await Promise.all(filters.map(filter => chrome.cookies.getAll(filter)));
+  const found = await Promise.all(urls.map(url => chrome.cookies.getAll({url})));
   const unique = new Map();
-  for (const cookie of found.flat().filter(cookie => GOOGLE_SESSION_COOKIES.has(cookie.name))) {
+  for (const cookie of found.flat()) {
     const key = [cookie.storeId, cookie.name, cookie.domain, cookie.path].join('|');
     unique.set(key, cookie);
   }
@@ -46,10 +40,8 @@ exportButton.addEventListener('click', async () => {
   statusBox.textContent = 'Checking the signed-in browser session…';
   try {
     const cookies = await captureCookies();
-    const names = new Set(cookies.map(cookie => cookie.name));
-    const missing = [...REQUIRED_COOKIES].filter(name => !names.has(name));
-    if (missing.length) {
-      throw new Error('No NotebookLM session found. Sign in at notebook.google.com, wait for it to load, then try again.');
+    if (!cookies.length) {
+      throw new Error('Chrome returned no cookies for NotebookLM or Google sign-in. Check that the helper has permission to access Google sites.');
     }
 
     const state = {cookies: cookies.map(storageCookie), origins: []};

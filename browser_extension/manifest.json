@@ -1,12 +1,13 @@
 {
   "manifest_version": 3,
   "name": "NotebookLM Session Helper",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Export a signed-in NotebookLM browser session for the NotebookLM API setup portal.",
   "permissions": ["cookies", "downloads"],
   "host_permissions": [
     "https://*.google.com/*",
-    "https://notebook.google.com/*"
+    "https://notebook.google.com/*",
+    "https://notebooklm.google.com/*"
   ],
   "action": {
     "default_title": "Export NotebookLM session",
