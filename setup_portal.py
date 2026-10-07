@@ -71,7 +71,7 @@ SETUP_PAGE = r"""<!doctype html>
     <ol>
       <li><a href="/setup/extension.zip">Download the Chrome session helper</a>, unzip it, then install the folder from <code>chrome://extensions</code> using Developer mode → Load unpacked. This is a one-time browser setup.</li>
       <li><a href="https://notebook.google.com/" target="_blank" rel="noopener">Sign in to NotebookLM with Google</a>, then click the NotebookLM session helper in Chrome and choose <strong>Download storage_state.json</strong>.</li>
-      <li>Upload that file below. The service verifies it before saving it.</li>
+      <li>Upload that file below. You can also upload a Cookie Editor JSON export; the service converts and verifies it before saving.</li>
     </ol>
     <form id="upload-form">
       <input type="file" id="storage-file" name="file" accept="application/json,.json" required>
@@ -313,9 +313,37 @@ def install_setup_portal(app: FastAPI, storage_path: str) -> None:
             state = json.loads(raw)
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
             raise HTTPException(status_code=400, detail='Upload must be a valid JSON storage_state file') from error
-        cookies = state.get('cookies') if isinstance(state, dict) else None
+        cookies = state if isinstance(state, list) else state.get('cookies') if isinstance(state, dict) else None
         if not isinstance(cookies, list) or not cookies or any(not isinstance(cookie, dict) for cookie in cookies):
-            raise HTTPException(status_code=400, detail='Storage file must contain a non-empty cookies array')
+            raise HTTPException(status_code=400, detail='JSON must contain a cookies array or be a Cookie Editor cookie list')
+        normalized_cookies = []
+        for cookie in cookies:
+            if not isinstance(cookie.get('name'), str) or not isinstance(cookie.get('value'), str) or not isinstance(cookie.get('domain'), str):
+                raise HTTPException(status_code=400, detail='Each cookie must include string name, value, and domain fields')
+            normalized = {
+                'name': cookie['name'],
+                'value': cookie['value'],
+                'domain': cookie['domain'],
+                'path': cookie.get('path') or '/',
+                'httpOnly': bool(cookie.get('httpOnly', False)),
+                'secure': bool(cookie.get('secure', False)),
+            }
+            expires = -1 if cookie.get('session') else cookie.get('expires', cookie.get('expirationDate', -1))
+            if isinstance(expires, (int, float)) and not isinstance(expires, bool):
+                normalized['expires'] = expires
+            same_site = {
+                'strict': 'Strict',
+                'lax': 'Lax',
+                'no_restriction': 'None',
+                'Strict': 'Strict',
+                'Lax': 'Lax',
+                'None': 'None',
+            }.get(cookie.get('sameSite'))
+            if same_site:
+                normalized['sameSite'] = same_site
+            normalized_cookies.append(normalized)
+        state = {'cookies': normalized_cookies, 'origins': state.get('origins', []) if isinstance(state, dict) else []}
+        raw = json.dumps(state, separators=(',', ':')).encode('utf-8')
         resolved_storage_path.parent.mkdir(parents=True, exist_ok=True)
         temp_path = None
         try:
