@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import io
 import json
 import os
 import secrets
@@ -8,12 +9,13 @@ import subprocess
 import tempfile
 import threading
 import time
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from notebooklm import NotebookLMClient
 
 
@@ -48,11 +50,13 @@ SETUP_PAGE = r"""<!doctype html>
     #message { min-height: 24px; white-space: pre-wrap; }
     input[type=file] { display: block; margin: 10px 0; max-width: 100%; }
     code { overflow-wrap: anywhere; }
+    ol { padding-left: 22px; }
+    li { margin: 8px 0; }
   </style>
 </head>
 <body>
   <h1>NotebookLM access</h1>
-  <p class="muted">Upload or renew the NotebookLM session used by this service.</p>
+  <p class="muted">Create or renew the NotebookLM session used by this service.</p>
   <section class="card">
     <h2>Session status</h2>
     <div id="status">Checking…</div>
@@ -63,8 +67,12 @@ SETUP_PAGE = r"""<!doctype html>
     </div>
   </section>
   <section class="card">
-    <h2>Upload a session file</h2>
-    <p class="muted">Choose a NotebookLM <code>storage_state.json</code> exported from a signed-in browser. We verify it before replacing the saved session.</p>
+    <h2>Set up a new session</h2>
+    <ol>
+      <li><a href="/setup/extension.zip">Download the Chrome session helper</a>, unzip it, then install the folder from <code>chrome://extensions</code> using Developer mode → Load unpacked. This is a one-time browser setup.</li>
+      <li><a href="https://notebook.google.com/" target="_blank" rel="noopener">Sign in to NotebookLM with Google</a>, then click the NotebookLM session helper in Chrome and choose <strong>Download storage_state.json</strong>.</li>
+      <li>Upload that file below. The service verifies it before saving it.</li>
+    </ol>
     <form id="upload-form">
       <input type="file" id="storage-file" name="file" accept="application/json,.json" required>
       <button type="submit">Upload and verify</button>
@@ -246,6 +254,21 @@ def install_setup_portal(app: FastAPI, storage_path: str) -> None:
     @router.get('/setup', response_class=HTMLResponse)
     async def setup_page():
         return HTMLResponse(SETUP_PAGE)
+
+    @router.get('/setup/extension.zip')
+    async def download_extension():
+        extension_dir = Path(__file__).parent / 'browser_extension'
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as bundle:
+            for path in sorted(extension_dir.iterdir()):
+                if path.is_file():
+                    bundle.write(path, arcname=f'notebooklm-session-helper/{path.name}')
+        archive.seek(0)
+        return StreamingResponse(
+            archive,
+            media_type='application/zip',
+            headers={'Content-Disposition': 'attachment; filename="notebooklm-session-helper.zip"'},
+        )
 
     @router.get('/setup/api/status')
     async def setup_status():

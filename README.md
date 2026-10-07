@@ -118,7 +118,7 @@ export NOTEBOOKLM_STORAGE_PATH=/path/to/storage_state.json
 
 ## 🖥️ Setup and renewal portal
 
-The `/setup` page uses HTTP Basic Auth configured with `NOTEBOOKLM_SETUP_USERNAME` and `NOTEBOOKLM_SETUP_PASSWORD`. Upload a `storage_state.json` exported from a signed-in NotebookLM browser; the app verifies it against NotebookLM before replacing the active session. **Renew session now** runs `notebooklm auth refresh --verify`; **Check connection** confirms the saved session works. The session file is stored in the persistent auth volume.
+The `/setup` page uses HTTP Basic Auth configured with `NOTEBOOKLM_SETUP_USERNAME` and `NOTEBOOKLM_SETUP_PASSWORD`. For first-time setup, download the Chrome session helper from the page, install its unzipped folder at `chrome://extensions` with Developer mode → Load unpacked, and sign in to NotebookLM in Chrome. The helper exports the required Google session cookies as `storage_state.json`; upload that file on `/setup` and the app verifies it before saving. The helper only exports known Google sign-in cookies. **Renew session now** refreshes an existing session; **Check connection** confirms it works. The session file is stored in the persistent auth volume.
 
 Configure `NOTEBOOKLM_REST_API_KEY`, `NOTEBOOKLM_SETUP_USERNAME`, and `NOTEBOOKLM_SETUP_PASSWORD` in the Dokploy environment. Attach the HTTPS domain to the container port `8000`. For local Compose, set `PORT` to the desired host port (defaults to `8001`); it binds to localhost only. Keep the auth volume persistent and do not commit either the API key or Google auth file.
 
