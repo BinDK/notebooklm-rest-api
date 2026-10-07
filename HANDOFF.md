@@ -21,7 +21,7 @@ The installed `notebooklm-py` has `sources.add_url(...)`, which handles URL and 
 ## Live state after local Compose verification
 
 Compose was rebuilt and started on host port 8001, preserving the volume. `/health`, `/setup`, and `/setup/sources` returned 200. The saved session file is present, but `/setup/api/check` returned 502: `CSRF token not found in HTML. Final URL: https://notebook.google.com/`. The in-app renewal failed with the same error, and re-uploading the previous Cookie Editor export failed verification without replacing the saved session. `/setup/api/sources/notebooks` now returns a clear 502 instead of 500 when auth fails. The source-manager actions cannot be tried against NotebookLM until its session works again. The [upstream troubleshooting page](https://github.com/teng-lin/notebooklm-py/blob/main/docs/troubleshooting.md) describes this exact CSRF error as potentially a page/extraction change; don't assume cookie expiry solely from this message.
-The Zen browser still displays a signed-in NotebookLM notebook, so browser sign-in and API extraction currently disagree.
+Chrome displays a signed-in NotebookLM account with four notebooks, so browser sign-in and API extraction currently disagree. Use Chrome for the next fresh Cookie Editor export; the earlier Zen export failed re-verification.
 
 Next: obtain a fresh Cookie Editor export from a currently working signed-in NotebookLM browser, paste or upload it at `/setup`, then use **Check connection**. If it still gives this CSRF error, inspect upstream notebooklm-py issues or page changes before changing the authentication model. Do not log, commit, or share cookie values. Keep `notebooklm_data`; never kill the unrelated port-8000 process.
 
