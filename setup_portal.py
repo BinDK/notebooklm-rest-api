@@ -343,8 +343,11 @@ def install_setup_portal(app: FastAPI, storage_path: str) -> None:
             raise HTTPException(status_code=400, detail=f'Upload was not installed because verification failed: {message}') from error
         return {'ok': True, 'notebook_count': count}
 
-    @router.websocket('/setup/vnc/websockify')
-    async def vnc_websocket(websocket: WebSocket):
+    @router.websocket('/setup/vnc/{path:path}')
+    async def vnc_websocket(websocket: WebSocket, path: str):
+        if path.rsplit('/', 1)[-1] != 'websockify':
+            await websocket.close(code=4404)
+            return
         if not SETUP_USERNAME or not SETUP_PASSWORD:
             await websocket.close(code=1013)
             return
