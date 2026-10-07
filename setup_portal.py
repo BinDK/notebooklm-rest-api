@@ -209,11 +209,10 @@ def _start_auth_action(storage_path: Path, action: str) -> dict:
         log_path = Path(tempfile.gettempdir()) / 'notebooklm-setup-auth.log'
         log_handle = log_path.open('w', encoding='utf-8')
         os.chmod(log_path, 0o600)
-        command = ['notebooklm', '--storage', str(storage_path)]
         if action == 'login':
-            command.extend(['login', '--browser-timeout', '900'])
+            command = ['python', 'setup_browser_login.py', '--storage', str(storage_path)]
         else:
-            command.extend(['auth', 'refresh', '--verify'])
+            command = ['notebooklm', '--storage', str(storage_path), 'auth', 'refresh', '--verify']
         environment = os.environ.copy()
         if REMOTE_BROWSER_ENABLED:
             environment['DISPLAY'] = environment.get('DISPLAY', ':99')
