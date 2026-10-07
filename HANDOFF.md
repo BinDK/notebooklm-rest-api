@@ -1,6 +1,6 @@
 # Handoff: NotebookLM REST API
 
-Start with `AGENTS.md` for the API map and development rules. `README.md` is the user guide; `/openapi.json` is the generated API schema.
+Start with `ONBOARD.md` for the current state and next work, then `AGENTS.md` for the API map and development rules. `README.md` is the user guide; `/openapi.json` is the generated API schema.
 
 Continue the `BinDK/notebooklm-rest-api` fork for Dokploy. User authorized commit/push to their fork only; never push upstream `origin`.
 

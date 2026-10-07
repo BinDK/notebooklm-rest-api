@@ -1,6 +1,6 @@
 # NotebookLM REST API: agent guide
 
-Read this before changing the API. `README.md` is the user guide; `HANDOFF.md` records the latest operational state. FastAPI serves the exact request/response schema at `/openapi.json` and an interactive reference at `/docs`.
+Start with `ONBOARD.md` for current state and next work. Read this file before changing the API. `README.md` is the user guide; `HANDOFF.md` records the latest operational state. FastAPI serves the exact request/response schema at `/openapi.json` and an interactive reference at `/docs`.
 
 ## Project map
 
