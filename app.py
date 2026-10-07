@@ -5,6 +5,7 @@ import os
 import secrets
 import uuid
 import tempfile
+from pathlib import Path
 from typing import Any, Optional, Literal, Dict
 
 from fastapi import FastAPI, Request, UploadFile, File, Form, HTTPException
@@ -12,6 +13,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
 from notebooklm import NotebookLMClient, RPCError  # notebooklm-py :contentReference[oaicite:2]{index=2}
+from setup_portal import install_setup_portal
 
 
 # ----------------------------
@@ -107,6 +109,10 @@ class TaskPollResp(BaseModel):
 # App
 # ----------------------------
 app = FastAPI(title="NotebookLM REST API (powered by notebooklm-py)")
+setup_home = os.environ.get("NOTEBOOKLM_HOME", str(Path.home() / ".notebooklm"))
+setup_profile = os.environ.get("NOTEBOOKLM_PROFILE", "default")
+setup_storage_path = AUTH_STORAGE_PATH or os.path.join(setup_home, "profiles", setup_profile, "storage_state.json")
+install_setup_portal(app, setup_storage_path)
 
 
 @app.middleware("http")

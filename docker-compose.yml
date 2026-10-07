@@ -4,6 +4,9 @@ services:
     restart: unless-stopped
     environment:
       NOTEBOOKLM_REST_API_KEY: ${NOTEBOOKLM_REST_API_KEY:?Set NOTEBOOKLM_REST_API_KEY in Dokploy}
+      NOTEBOOKLM_SETUP_USERNAME: ${NOTEBOOKLM_SETUP_USERNAME:?Set NOTEBOOKLM_SETUP_USERNAME in Dokploy}
+      NOTEBOOKLM_SETUP_PASSWORD: ${NOTEBOOKLM_SETUP_PASSWORD:?Set NOTEBOOKLM_SETUP_PASSWORD in Dokploy}
+      NOTEBOOKLM_REMOTE_BROWSER_ENABLED: "1"
       NOTEBOOKLM_HOME: /data/notebooklm
       NOTEBOOKLM_STORAGE_PATH: /data/notebooklm/profiles/default/storage_state.json
     volumes:
