@@ -100,6 +100,9 @@ async function refreshStatus() {
       ? 'Session file present' + (result.modified ? ' · updated ' + result.modified : '')
       : 'No session file yet';
     if (result.operation) statusBox.textContent += ' · ' + result.operation;
+    if (result.operation && result.operation.startsWith('renew failed') && messageBox.textContent.startsWith('Session renewal started')) {
+      messageBox.textContent = 'Session renewal failed. Re-export your cookies or try again later.';
+    }
   } catch (error) {
     statusBox.textContent = 'Status unavailable';
     messageBox.textContent = error.message;

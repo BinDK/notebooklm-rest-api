@@ -13,7 +13,7 @@ SOURCE_PAGE = r"""<!doctype html>
 <title>NotebookLM sources</title><style>
 :root{color-scheme:light;font:16px system-ui,sans-serif}body{max-width:960px;margin:32px auto;padding:0 18px;color:#172033}h1{margin-bottom:6px}.muted{color:#536174}.card{border:1px solid #d8dee8;border-radius:12px;padding:20px;margin:18px 0}.row{display:flex;gap:10px;margin:10px 0}input,select{font:inherit;padding:10px;border:1px solid #cbd5e1;border-radius:8px}input{flex:1;min-width:0}button,.button{font:inherit;border:0;border-radius:8px;padding:10px 15px;background:#175cd3;color:#fff;cursor:pointer;text-decoration:none}button.secondary{background:#e8eef8;color:#172033}button.danger{background:#b42318}button:disabled{opacity:.55;cursor:wait}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}#message{white-space:pre-wrap;min-height:24px}.small{font-size:.9rem}.tweak{position:fixed;right:12px;bottom:12px;background:#fff;border:1px solid #d8dee8;padding:8px 12px;border-radius:10px;box-shadow:0 2px 12px #0002}
 </style></head><body>
-<h1>NotebookLM sources</h1><p class="muted">Add several URL or YouTube sources. If NotebookLM says a notebook is full, the remaining URLs continue in a new notebook.</p>
+<p><a href="/setup">← Session setup</a></p><h1>NotebookLM sources</h1><p class="muted">Add several URL or YouTube sources. If NotebookLM says a notebook is full, the remaining URLs continue in a new notebook.</p>
 <section class="card"><label for="notebook"><strong>Notebook</strong></label><div class="row"><select id="notebook" style="flex:1"></select><input id="new-title" placeholder="Or create a notebook by title"></div><p class="small muted">Choose an existing notebook or enter a title to create a new one for these sources.</p></section>
 <section class="card"><h2>URLs</h2><div id="urls"></div><div class="actions"><button class="secondary" id="add-row">Add another URL</button><button class="secondary" id="clear-inputs">Clear inputs</button><button id="submit">Add all sources</button></div><p id="message" role="status"></p></section>
 <section class="card"><h2>Clear a notebook</h2><p class="muted">Delete every source from the selected notebook.</p><button class="danger" id="delete-all">Delete all sources in selected notebook</button></section>
@@ -61,7 +61,7 @@ def install_source_portal(app: FastAPI, storage_path: str) -> None:
 
     @router.get('/setup/api/sources/notebooks')
     async def source_notebooks():
-        client = await NotebookLMClient.from_storage(storage_path)
+        client = await _client_from_storage(storage_path)
         async with client:
             try:
                 items = await client.notebooks.list()
@@ -76,7 +76,7 @@ def install_source_portal(app: FastAPI, storage_path: str) -> None:
             raise HTTPException(status_code=400, detail='Provide at least one URL')
         if any(urlsplit(url).scheme not in {'http', 'https'} or not urlsplit(url).hostname for url in urls):
             raise HTTPException(status_code=400, detail='Each source must be an http or https URL')
-        client = await NotebookLMClient.from_storage(storage_path)
+        client = await _client_from_storage(storage_path)
         added, errors, continuations = [], [], []
         async with client:
             notebook_id = req.notebook_id
@@ -85,21 +85,38 @@ def install_source_portal(app: FastAPI, storage_path: str) -> None:
                     raise HTTPException(status_code=400, detail='Select a notebook or provide a title')
                 notebook = await client.notebooks.create(req.title.strip())
                 notebook_id = getattr(notebook, 'id', None) or _dump(notebook).get('id')
+            source_limit = None
+            source_count = None
+            try:
+                source_limit = (await client.settings.get_account_limits()).source_limit
+                if source_limit:
+                    source_count = len(await client.sources.list(notebook_id))
+            except Exception:
+                pass
             for url in urls:
                 try:
+                    if source_limit and source_count is not None and source_count >= source_limit:
+                        continuation = await _create_continuation(client, req.title, len(continuations) + 1)
+                        continuations.append(continuation)
+                        notebook_id = continuation['id']
+                        source_count = 0
                     source = await _add(client, notebook_id, url)
                     added.append({'url': url, 'notebook_id': notebook_id, 'source': _dump(source)})
+                    if source_count is not None:
+                        source_count += 1
                 except RPCError as error:
                     if not _is_source_limit(error):
                         errors.append({'url': url, 'error': str(error).splitlines()[0][:240]})
                         continue
                     try:
-                        title = (req.title.strip() or 'NotebookLM sources') + f' (continued {len(continuations)+1})'
-                        notebook = await client.notebooks.create(title)
-                        notebook_id = getattr(notebook, 'id', None) or _dump(notebook).get('id')
-                        continuations.append({'id': notebook_id, 'title': title})
+                        continuation = await _create_continuation(client, req.title, len(continuations) + 1)
+                        continuations.append(continuation)
+                        notebook_id = continuation['id']
+                        source_count = 0
                         source = await _add(client, notebook_id, url)
                         added.append({'url': url, 'notebook_id': notebook_id, 'source': _dump(source)})
+                        if source_count is not None:
+                            source_count += 1
                     except Exception as retry_error:
                         errors.append({'url': url, 'error': str(retry_error).splitlines()[0][:240]})
             return {'ok': not errors, 'added': added, 'errors': errors,
@@ -107,7 +124,7 @@ def install_source_portal(app: FastAPI, storage_path: str) -> None:
 
     @router.delete('/setup/api/notebooks/{notebook_id}/sources')
     async def clear_notebook_sources(notebook_id: str):
-        client = await NotebookLMClient.from_storage(storage_path)
+        client = await _client_from_storage(storage_path)
         async with client:
             try:
                 sources = await client.sources.list(notebook_id)
@@ -129,3 +146,20 @@ def install_source_portal(app: FastAPI, storage_path: str) -> None:
                 raise HTTPException(status_code=502, detail=str(error).splitlines()[0][:240]) from error
 
     app.include_router(router)
+
+
+async def _client_from_storage(storage_path: str) -> NotebookLMClient:
+    try:
+        return await NotebookLMClient.from_storage(storage_path)
+    except Exception as error:
+        raise HTTPException(
+            status_code=502,
+            detail='NotebookLM connection failed. Renew or replace the session at /setup.',
+        ) from error
+
+
+async def _create_continuation(client: NotebookLMClient, title: str, number: int) -> dict:
+    continuation_title = (title.strip() or 'NotebookLM sources') + f' (continued {number})'
+    notebook = await client.notebooks.create(continuation_title)
+    notebook_id = getattr(notebook, 'id', None) or _dump(notebook).get('id')
+    return {'id': notebook_id, 'title': continuation_title}
