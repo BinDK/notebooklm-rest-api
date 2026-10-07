@@ -52,7 +52,7 @@ It allows you to manage Notebooks, add sources, perform Q&A, generate artifacts,
 * Task polling support
 * File download support
 
-### 🔐 Optional API Key Protection
+### 🔐 API Key Protection
 
 ---
 
@@ -99,11 +99,14 @@ pip install -r requirements.txt
 notebooklm login
 ```
 
-By default, authentication is stored at:
+With `notebooklm-py` 0.8.x, authentication is stored in the default profile at:
 
 ```
-~/.notebooklm/storage_state.json
+~/.notebooklm/profiles/default/storage_state.json
 ```
+
+For the Docker Compose volume, place it at
+`/data/notebooklm/profiles/default/storage_state.json`.
 
 You can override it with:
 
@@ -127,9 +130,10 @@ http://localhost:8000/docs
 
 ---
 
-## 🔐 Optional API Key Protection
+## 🔐 API Key Protection
 
-Set API key:
+The `/v1` routes require an API key. They return `503` if it is not configured.
+Set the same key in the server environment and send it with every API request:
 
 ```bash
 export NOTEBOOKLM_REST_API_KEY=your-secret-key
@@ -219,7 +223,7 @@ GET /v1/notebooks/{notebook_id}/artifacts/download?type=quiz&output_format=json
 
 | Variable                | Description                |
 | ----------------------- | -------------------------- |
-| NOTEBOOKLM_STORAGE_PATH | Path to storage_state.json |
+| NOTEBOOKLM_STORAGE_PATH | Explicit path to storage_state.json |
 | NOTEBOOKLM_AUTH_JSON    | Inject auth JSON directly  |
 | NOTEBOOKLM_HOME         | Base notebooklm directory  |
 | NOTEBOOKLM_REST_API_KEY | REST API protection key    |

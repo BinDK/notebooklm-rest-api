@@ -1,0 +1,15 @@
+services:
+  notebooklm-api:
+    build: .
+    restart: unless-stopped
+    environment:
+      NOTEBOOKLM_REST_API_KEY: ${NOTEBOOKLM_REST_API_KEY:?Set NOTEBOOKLM_REST_API_KEY in Dokploy}
+      NOTEBOOKLM_HOME: /data/notebooklm
+      NOTEBOOKLM_STORAGE_PATH: /data/notebooklm/profiles/default/storage_state.json
+    volumes:
+      - notebooklm_data:/data/notebooklm
+    expose:
+      - "8000"
+
+volumes:
+  notebooklm_data:

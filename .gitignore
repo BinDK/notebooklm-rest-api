@@ -1,0 +1,7 @@
+.venv/
+.env
+__pycache__/
+*.py[cod]
+.notebooklm/
+storage_state.json
+master_token.json

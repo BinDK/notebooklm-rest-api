@@ -2,12 +2,13 @@
 # Namhyeon Go <gnh1201@catswords.re.kr>
 # https://github.com/gnh1201/notebooklm-rest-api
 import os
+import secrets
 import uuid
 import tempfile
 from typing import Any, Optional, Literal, Dict
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, Request, UploadFile, File, Form, HTTPException
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
 from notebooklm import NotebookLMClient, RPCError  # notebooklm-py :contentReference[oaicite:2]{index=2}
@@ -18,16 +19,6 @@ from notebooklm import NotebookLMClient, RPCError  # notebooklm-py :contentRefer
 # ----------------------------
 API_KEY = os.environ.get("NOTEBOOKLM_REST_API_KEY", "")  # set this in production
 AUTH_STORAGE_PATH = os.environ.get("NOTEBOOKLM_STORAGE_PATH")  # optional override
-
-
-def require_api_key(x_api_key: Optional[str] = None):
-    # Minimal API-key gate. Put this behind a real gateway (Cloudflare, Nginx, etc.) for production.
-    if API_KEY:
-        # FastAPI header parsing without extra imports (keep simple):
-        # Prefer: from fastapi import Header; def require_api_key(x_api_key: str = Header(None)) ...
-        # but we keep it minimal and rely on query param fallback too.
-        if x_api_key != API_KEY:
-            raise HTTPException(status_code=401, detail="Invalid API key")
 
 
 async def get_client() -> NotebookLMClient:
@@ -116,6 +107,20 @@ class TaskPollResp(BaseModel):
 # App
 # ----------------------------
 app = FastAPI(title="NotebookLM REST API (powered by notebooklm-py)")
+
+
+@app.middleware("http")
+async def protect_api(request: Request, call_next):
+    if request.url.path.startswith("/v1/"):
+        if not API_KEY:
+            return JSONResponse(
+                status_code=503,
+                content={"detail": "NOTEBOOKLM_REST_API_KEY is not configured"},
+            )
+        supplied_key = request.headers.get("X-API-Key", "")
+        if not secrets.compare_digest(supplied_key, API_KEY):
+            return JSONResponse(status_code=401, content={"detail": "Invalid API key"})
+    return await call_next(request)
 
 
 @app.get("/health")
