@@ -120,7 +120,7 @@ export NOTEBOOKLM_STORAGE_PATH=/path/to/storage_state.json
 
 The `/setup` page uses HTTP Basic Auth configured with `NOTEBOOKLM_SETUP_USERNAME` and `NOTEBOOKLM_SETUP_PASSWORD`. In Docker, the page includes a remote browser for Google sign-in. You can also upload a `storage_state.json`; the app verifies it against NotebookLM before replacing the active session. **Renew session now** runs `notebooklm auth refresh --verify`; **Check connection** confirms the saved session works.
 
-Configure `NOTEBOOKLM_REST_API_KEY`, `NOTEBOOKLM_SETUP_USERNAME`, and `NOTEBOOKLM_SETUP_PASSWORD` in the Dokploy environment. Attach the HTTPS domain to port `8000`. Keep the auth volume persistent and do not commit either the API key or Google auth file.
+Configure `NOTEBOOKLM_REST_API_KEY`, `NOTEBOOKLM_SETUP_USERNAME`, and `NOTEBOOKLM_SETUP_PASSWORD` in the Dokploy environment. Attach the HTTPS domain to the container port `8000`. For local Compose, set `PORT` to the desired host port (defaults to `8001`); it binds to localhost only. Keep the auth volume persistent and do not commit either the API key or Google auth file.
 
 ## ▶️ Run Server
 
